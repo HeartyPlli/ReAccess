@@ -1,0 +1,103 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME:-reaccess_hub}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?Set POSTGRES_ADMIN_PASSWORD in .env}
+      DATABASE_USER: ${DATABASE_USER:-reaccess_app}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:?Set DATABASE_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./backend/migrations/001_foundation.sql:/docker-entrypoint-initdb.d/001_foundation.sql:ro
+      - ./backend/migrations/003_account_requests.sql:/docker-entrypoint-initdb.d/003_account_requests.sql:ro
+      - ./backend/migrations/004_admin_portal.sql:/docker-entrypoint-initdb.d/004_admin_portal.sql:ro
+      - ./backend/migrations/005_registry_management.sql:/docker-entrypoint-initdb.d/005_registry_management.sql:ro
+      - ./backend/migrations/006_request_configuration.sql:/docker-entrypoint-initdb.d/006_request_configuration.sql:ro
+      - ./backend/migrations/007_registry_edit_delete.sql:/docker-entrypoint-initdb.d/007_registry_edit_delete.sql:ro
+      - ./backend/migrations/008_faculty_id_format.sql:/docker-entrypoint-initdb.d/008_faculty_id_format.sql:ro
+      - ./backend/migrations/002_support.sql:/docker-entrypoint-initdb.d/002_support.sql:ro
+      - ./deploy/postgres/000-create-app.sh:/docker-entrypoint-initdb.d/000-create-app.sh:ro
+      - ./deploy/postgres/999-grant-app.sh:/docker-entrypoint-initdb.d/999-grant-app.sh:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${DATABASE_NAME:-reaccess_hub}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      API_HOST: 0.0.0.0
+      API_PORT: 8080
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8081}
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: ${DATABASE_NAME:-reaccess_hub}
+      DATABASE_USER: ${DATABASE_USER:-reaccess_app}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:?Set DATABASE_PASSWORD in .env}
+      DATABASE_SSL: "false"
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-}
+      ACCESS_TOKEN_MINUTES: ${ACCESS_TOKEN_MINUTES:-15}
+      REFRESH_TOKEN_DAYS: ${REFRESH_TOKEN_DAYS:-7}
+      SKIP_DATABASE_CONNECTION: "false"
+      LETTER_TEMPLATE_PATH: ${LETTER_TEMPLATE_PATH:-/app/templates/formal-letter.docx}
+      LETTER_TEMPLATE_URL: ${LETTER_TEMPLATE_URL:-}
+      REPORT_FONT_PATH: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+    volumes:
+      - ./backend/templates:/app/templates:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  notifications:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["/app/bin/notification_worker"]
+    profiles: ["notifications"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: ${DATABASE_NAME:-reaccess_hub}
+      DATABASE_USER: ${DATABASE_USER:-reaccess_app}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:?Set DATABASE_PASSWORD in .env}
+      DATABASE_SSL: "false"
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-}
+      TWILIO_MESSAGING_SERVICE_SID: ${TWILIO_MESSAGING_SERVICE_SID:-}
+    volumes:
+      - ./backend/templates:/app/templates:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./build/web:/usr/share/nginx/html:ro
+      - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+    ports:
+      - "8081:80"
+
+volumes:
+  postgres-data:

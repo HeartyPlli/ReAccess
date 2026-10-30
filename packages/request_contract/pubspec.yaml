@@ -1,0 +1,6 @@
+name: request_contract
+description: Shared account-service request catalog and validation.
+publish_to: none
+version: 1.0.0
+environment:
+  sdk: ^3.13.3
